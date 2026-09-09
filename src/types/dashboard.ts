@@ -44,6 +44,7 @@ export interface RemedialAction {
 }
 
 export interface SubOffering {
+  mapping?: { relationship: 'tag' | 'parent-child' | 'peer'; sourceOffering: string; sourceSubOffering: string; updatedOffering: string; sourceSheet: string; sourceRow: number };
   id: string;
   no: number | string;
   name: string;

@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ALL_QUARTER_OFFERINGS, ALL_QUARTER_ACTIONS } from './data/initialData';
 import { Offering, SubOffering, RemedialAction, FilterOptions, QuarterType, ActionScope } from './types/dashboard';
-import { calculateOfferingRollup, parseExcelImport } from './utils/calculations';
+import { calculateOfferingRollup } from './utils/calculations';
+import { ImportMappingModal } from './components/ImportMappingModal';
 import { resolveAction } from './utils/dataIntegrity';
 import { defaultDashboard, loadDashboard, saveDashboard } from './utils/storage';
 import { Header } from './components/Header';
@@ -65,6 +66,7 @@ export default function App() {
 
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [videoDemoModalOpen, setVideoDemoModalOpen] = useState(false);
+  const [importSource, setImportSource] = useState<{ buffer: ArrayBuffer; name: string; quarter: QuarterType } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -191,12 +193,7 @@ export default function App() {
     if (!file) return;
     const quarter = filters.quarter;
     try {
-      const parsed = parseExcelImport(await file.arrayBuffer(), offerings, actions, quarter);
-      if (parsed.error) { showToast(`Import failed: ${parsed.error}`); return; }
-      setAllOfferings(prev => ({ ...prev, [quarter]: parsed.offerings }));
-      setAllActions(prev => ({ ...prev, [quarter]: parsed.actions }));
-      setFilters(prev => ({ ...prev, offeringId: 'All', owner: 'All', searchQuery: '', statusFilter: 'All' }));
-      showToast(`Imported ${parsed.offerings.length} offerings and ${parsed.actions.length} actions for ${quarter}.`);
+      setImportSource({ buffer: await file.arrayBuffer(), name: file.name, quarter });
     } catch (error) {
       showToast(`Import failed: ${error instanceof Error ? error.message : 'Unable to read file.'}`);
     }
@@ -296,6 +293,16 @@ export default function App() {
       </main>
 
       {/* Modals */}
+      {importSource && <ImportMappingModal {...importSource}
+        offerings={allOfferings[importSource.quarter]} actions={allActions[importSource.quarter] || []}
+        onClose={() => setImportSource(null)} onApply={parsed => {
+          const quarter = importSource.quarter;
+          setAllOfferings(prev => ({ ...prev, [quarter]: parsed.offerings }));
+          setAllActions(prev => ({ ...prev, [quarter]: parsed.actions }));
+          setFilters(prev => ({ ...prev, quarter, offeringId: 'All', owner: 'All', searchQuery: '', statusFilter: 'All' }));
+          setImportSource(null);
+          showToast(`Imported ${parsed.offerings.length} offerings and ${parsed.actions.length} actions for ${quarter}.`);
+        }} />}
       <EditRowModal
         isOpen={editModalOpen}
         onClose={() => setEditModalOpen(false)}

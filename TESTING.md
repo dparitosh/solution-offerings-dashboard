@@ -20,3 +20,13 @@ Registry actions and free-text remedial summaries are separate records; both app
 ## Test scope
 
 Automated regression tests cover data calculations, filters, parent links, all-quarter workbook round trips, invalid imports, executive summary content, browser storage and Node HTTP serving (including video seeking). Browser checks cover creation, reassignment, persistence, quarter isolation and zero/regional edits. The dashboard contains demo data and generated example opportunity details; it has no shared backend database or CRM feed.
+# Mapping workflow acceptance
+
+- Import a flat source workbook. Check column suggestions, change the header row, and use Read headers to refresh the choices.
+- Map all six metrics, including zero actuals. Review tags and peers: totals must count each selected detail once.
+- Select parent–child: Updated Offering becomes the parent, with the original offering/sub-offering path shown in its details.
+- Narrow the source-row range. Existing actions outside the replacement must block Apply with a named error.
+- Review a valid scope, then change a relationship or column. Apply must remain disabled until another successful review.
+- Validate parent cycles, duplicate rows and duplicate column assignments; no partial data may be applied.
+- Apply a valid mapping. Export and reimport in dashboard-export mode; relationship, source-row provenance, metrics and action parents must survive.
+- Close the mapping window during validation; no import should be applied. Keyboard Tab stays in the dialog; Escape closes it.

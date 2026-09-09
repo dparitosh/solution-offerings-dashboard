@@ -42,6 +42,17 @@ Initial figures and generated opportunity details are demonstration data. The re
 
 See [TESTING.md](TESTING.md) for customer acceptance scenarios and the workbook import contract.
 
-## Dependencies
+## Import mapping
+
+Import opens a review window before changing data. For a dashboard export, choose **Dashboard export** to validate all workbook sheets and stable IDs. For a flat source worksheet, choose **Map source columns**:
+
+1. Select the sheet and header row, then map Offering, Sub-offering, Updated Offering, owner, the six AOP/actual metric columns, and optional remedial-plan columns. Numeric amounts must be USD millions.
+2. Choose **Tag** (label only), **Parent–child** (Updated Offering becomes the financial parent; details retain their original Offering / Sub-offering path), or **Peer** (a named link without copying peer metrics).
+3. Group tags/peers by Offering or Sub-offering. Parent–child groups by Updated Offering. Choose inclusive Excel source-row numbers after the header, excluding summary totals.
+4. Click **Review mapping**. Validation runs in a Web Worker. Review the resulting groups, metrics and plans, then **Apply import**. Changing any option invalidates the previous review.
+
+Apply replaces the selected quarter with the selected detail rows. It rejects duplicate rows, missing/invalid metrics, cyclic or conflicting parents, and action links that would become orphaned or ambiguous. Existing action IDs and details are preserved when their source rows can be matched; parent-only actions must have a single destination parent. New detail rows distribute metrics equally across regions; matched details retain their regional proportions. Relationship labels and source sheet/row provenance are saved and included in Excel exports. Mapped mode reads one source sheet; use dashboard-export mode to import the regional and action-registry sheets.
+
+## Dependency installation
 
 Use `npm ci` and the committed `package-lock.json`. SheetJS 0.20.3 is installed from its [official distribution](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/), with its checksum recorded in the lockfile. The old vulnerable npm `xlsx` release is not used.

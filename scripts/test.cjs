@@ -161,6 +161,60 @@ test('Export retains stable scope IDs, all action details and valid zero values'
   const registry = XLSX.utils.sheet_to_json(wb.Sheets['Remedial Actions']);
   registry.forEach(row => { const a = actions.find(a => a.id === row['Action ID']); assert.equal(row['Remedial Action Details'], a.description); assert.equal(row['Sub-Offering ID'], a.subOfferingId); assert.equal(row['Root Cause'], a.rootCause); });
 });
+const { reviewMapping, inspectWorkbook, mappingFields } = require('../src/utils/importMapping.ts');
+const mappingRow = (source = 'Original', sub = 'Detail', updated = 'Updated') => ({ Offering: source, 'Sub-offering': sub, 'Updated Offering': updated, Owner: 'Owner', ...Object.fromEntries(mappingFields.slice(4, 10).map(f => [f, f.includes('Actual') ? 0 : 5])), 'Pipeline Remedial Actions': 'Build pipeline with named accounts' });
+const mappingBuffer = rows => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Source'); return serialize(wb); };
+const mappingOptions = { mode: 'mapped', sheet: 'Source', headerRow: 1, startRow: 2, endRow: 2, columns: Object.fromEntries(mappingFields.map(f => [f, f === 'TCV Remedial Actions' || f === 'Revenue Remedial Actions' ? '' : f])), relationship: 'tag', grouping: 'offering' };
+test('Mapped tags and peers retain metrics exactly once and preserve source plans', () => {
+  for (const relationship of ['tag', 'peer']) {
+    const result = reviewMapping(mappingBuffer([mappingRow()]), { ...mappingOptions, relationship }, [], [], quarter);
+    assert.equal(result.error, undefined); assert.equal(result.offerings[0].name, 'Original');
+    assert.equal(result.offerings[0].pipelineActual, 0); assert.equal(result.offerings[0].pipelineAop, 5);
+    assert.equal(result.offerings[0].subOfferings[0].mapping.relationship, relationship);
+    assert.equal(result.offerings[0].subOfferings[0].pipelineRemedialActions, 'Build pipeline with named accounts');
+  }
+});
+test('Parent mapping moves child actions and parent actions to the correct updated parent', () => {
+  const off = offerings[0], sub = off.subOfferings[0];
+  const selectedActions = actions.filter(a => a.offeringId === off.id && (!a.subOfferingId || a.subOfferingId === sub.id));
+  assert.ok(selectedActions.length);
+  const result = reviewMapping(mappingBuffer([mappingRow(off.name, sub.name, 'New parent')]), { ...mappingOptions, relationship: 'parent-child' }, offerings, selectedActions, quarter);
+  assert.equal(result.error, undefined); assert.equal(result.offerings[0].name, 'New parent');
+  assert.equal(result.offerings[0].subOfferings[0].id, sub.id);
+  assert.equal(result.offerings[0].pipelineRemedialActions, off.pipelineRemedialActions);
+  result.actions.forEach(a => { assert.equal(a.offeringId, result.offerings[0].id); assert.equal(a.offeringName, 'New parent'); });
+  const repeated = reviewMapping(mappingBuffer([mappingRow(off.name, sub.name, 'New parent')]), { ...mappingOptions, relationship: 'parent-child' }, result.offerings, result.actions, quarter);
+  assert.equal(repeated.error, undefined); assert.equal(repeated.offerings[0].subOfferings[0].id, sub.id);
+  assert.equal(repeated.offerings[0].subOfferings[0].winRate, sub.winRate);
+});
+test('Mapping scope excludes unselected rows and supports sub-offering grouping', () => {
+  const data = mappingBuffer([mappingRow('One', 'Group'), mappingRow('Two', 'Group')]);
+  const result = reviewMapping(data, { ...mappingOptions, startRow: 3, endRow: 3, grouping: 'sub-offering' }, [], [], quarter);
+  assert.equal(result.error, undefined); assert.equal(result.offerings[0].name, 'Group'); assert.equal(result.offerings[0].subOfferings[0].name, 'Two');
+  assert.equal(result.offerings[0].pipelineAop, 5); assert.equal(result.offerings[0].subOfferings[0].mapping.sourceRow, 3);
+  assert.equal(inspectWorkbook(data)[0].rowCount, 3);
+});
+test('Mapping rejects missing metrics, duplicate column assignments, invalid scope and duplicate rows', () => {
+  const data = mappingBuffer([mappingRow()]);
+  assert.match(reviewMapping(data, { ...mappingOptions, columns: { ...mappingOptions.columns, 'Revenue Actual ($M)': '' } }, [], [], quarter).error, /Map Revenue/);
+  assert.match(reviewMapping(data, { ...mappingOptions, columns: { ...mappingOptions.columns, Owner: 'Offering' } }, [], [], quarter).error, /only once/);
+  assert.match(reviewMapping(data, { ...mappingOptions, startRow: 1 }, [], [], quarter).error, /Source rows/);
+  assert.match(reviewMapping(mappingBuffer([mappingRow(), mappingRow()]), { ...mappingOptions, endRow: 3 }, [], [], quarter).error, /duplicate detail/);
+});
+test('Parent mapping rejects cycles and conflicting parents', () => {
+  const opts = { ...mappingOptions, relationship: 'parent-child', endRow: 3 };
+  assert.match(reviewMapping(mappingBuffer([mappingRow('A', 'one', 'B'), mappingRow('B', 'two', 'A')]), opts, [], [], quarter).error, /cycle/);
+  assert.match(reviewMapping(mappingBuffer([mappingRow('A', 'one', 'B'), mappingRow('A', 'two', 'C')]), opts, [], [], quarter).error, /conflicting/);
+});
+test('Mapping refuses to orphan actions outside the replacement scope', () => {
+  const result = reviewMapping(mappingBuffer([mappingRow()]), mappingOptions, offerings, actions, quarter);
+  assert.ok(result.error); assert.equal(result.offerings.length, 0);
+});
+test('Relationship and source provenance survive Excel round trip', () => {
+  const result = reviewMapping(mappingBuffer([mappingRow()]), mappingOptions, [], [], quarter);
+  const restored = parseExcelImport(serialize(buildWorkbook(result.offerings, [])), [], [], quarter);
+  assert.equal(restored.error, undefined); assert.deepEqual(restored.offerings[0].subOfferings[0].mapping, result.offerings[0].subOfferings[0].mapping);
+});
 console.log(`${count} data tests passed.`);
 const serverTests = require('node:child_process').spawnSync(process.execPath, ['--test', require('node:path').join(__dirname, '../tests/server.test.mjs')], { stdio: 'inherit' });
 if (serverTests.status !== 0) process.exitCode = 1;

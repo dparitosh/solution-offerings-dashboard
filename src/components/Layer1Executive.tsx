@@ -984,6 +984,7 @@ export const Layer1Executive: React.FC<Layer1ExecutiveProps> = ({
                               <div className="flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
                                 <span className="font-medium text-slate-900 text-xs">{cleanSubName}</span>
+                                {sub.mapping && <span className="text-[10px] text-blue-800 bg-blue-50 rounded px-1" title={`Source: ${sub.mapping.sourceOffering} / ${sub.mapping.sourceSubOffering}, ${sub.mapping.sourceSheet} row ${sub.mapping.sourceRow}`}>{sub.mapping.relationship}: {sub.mapping.updatedOffering}</span>}
                                 {isSubHighTcv && (
                                   <span className="inline-flex items-center text-[9px] font-semibold text-amber-800 bg-amber-100 px-1 py-0.2 rounded border border-amber-300 whitespace-nowrap">
                                     TCV &gt; $10M

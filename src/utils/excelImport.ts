@@ -75,6 +75,13 @@ export function parseExcelImport(fileData: ArrayBuffer, current: Offering[] = []
         avgDealSize: number(row['Average Deal Size'], 'Average Deal Size', previous?.avgDealSize ?? 0), historicalGrowthYoY: previous?.historicalGrowthYoY ?? 0, regionalBreakdown };
       if (sub.winRate > 100 || !Number.isInteger(sub.dealCount)) throw new Error(`Invalid win rate or deal count for ${subName}.`);
       for (const [i, field] of metricFields.entries()) sub = setSubTotal(sub, field, number(row[metricHeaders[i]], `${subName}: ${metricHeaders[i]}`));
+      if (text(row['Mapping Relationship'])) {
+        const relationship = text(row['Mapping Relationship']) as NonNullable<SubOffering['mapping']>['relationship'];
+        if (!['tag', 'parent-child', 'peer'].includes(relationship) || !text(row['Updated Offering']) || !text(row['Source Offering'])) throw new Error(`Invalid relationship metadata for ${subName}.`);
+        const sourceRow = number(row['Source Row'], 'Source Row');
+        if (!Number.isInteger(sourceRow) || sourceRow < 1) throw new Error('Source Row must be a positive integer.');
+        sub.mapping = { relationship, updatedOffering: text(row['Updated Offering']), sourceOffering: text(row['Source Offering']), sourceSubOffering: text(row['Source Sub-offering']), sourceSheet: text(row['Source Sheet']), sourceRow };
+      }
       parent.subOfferings.push(recalculateSub(sub));
     }
     if (!offerings.length || offerings.some(o => !o.subOfferings.length)) throw new Error('Each offering must have at least one sub-offering row.');
