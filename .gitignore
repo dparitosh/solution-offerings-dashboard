@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+runtime.config.json
+release/
+temp_video/
+temp_video_build/
+test_tts.mp3
+assets/

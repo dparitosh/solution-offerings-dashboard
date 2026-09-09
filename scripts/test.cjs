@@ -1,0 +1,166 @@
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const ts = require('typescript');
+require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+}).outputText, filename);
+const { ALL_QUARTER_OFFERINGS, ALL_QUARTER_ACTIONS, REGIONS } = require('../src/data/initialData.ts');
+const { recalculateSub, setSubTotal, sumSubRegions, resolveAction, initialActionScope, matchesSubFilters, metricFields } = require('../src/utils/dataIntegrity.ts');
+const { calculateExecutiveKPIs, calculateOfferingRollup, calculateOwnerPerformances, buildWorkbook, parseExcelImport } = require('../src/utils/calculations.ts');
+const XLSX = require('xlsx');
+const quarter = 'Q1 FY 27';
+const offerings = structuredClone(ALL_QUARTER_OFFERINGS[quarter]);
+const actions = ALL_QUARTER_ACTIONS[quarter];
+const first = offerings[0].subOfferings[0];
+let count = 0;
+function test(name, fn) { try { fn(); count++; console.log(`PASS ${name}`); } catch (error) { console.error(`FAIL ${name}`, error); process.exitCode = 1; } }
+const serialize = wb => XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+const imported = wb => parseExcelImport(serialize(wb), offerings, actions, quarter);
+
+test('All seeded action IDs belong to the correct parent and quarter', () => {
+  for (const [q, offs] of Object.entries(ALL_QUARTER_OFFERINGS)) for (const action of ALL_QUARTER_ACTIONS[q]) {
+    const resolved = resolveAction(action, offs);
+    assert.equal(resolved.offeringName, action.offeringName);
+    assert.equal(resolved.subOfferingName, action.subOfferingName);
+  }
+});
+test('Zero revenue remains zero in executive and owner totals', () => {
+  const off = { ...offerings[0], subOfferings: [{ ...first, revenueActual: 0 }] };
+  assert.equal(calculateExecutiveKPIs([off]).totalRevenueActual, 0);
+  assert.equal(calculateOwnerPerformances([off], []).reduce((sum, o) => sum + o.totalRevenueActual, 0), 0);
+});
+test('Total edits redistribute regions with no rounding loss, including zero', () => {
+  for (const field of metricFields) for (const amount of [0, 0.01, 23.47, 1000]) {
+    const sub = setSubTotal(first, field, amount);
+    assert.ok(Math.abs(Object.values(sub.regionalBreakdown).reduce((n, r) => n + r[field], 0) - amount) < 1e-8);
+    assert.equal(sub[field], amount);
+  }
+});
+test('Regional edit rolls through sub-offering and parent gap/status', () => {
+  let sub = structuredClone(first);
+  for (const r of Object.values(sub.regionalBreakdown)) r.pipelineActual = r.tcvActual = r.revenueActual = 0;
+  sub = sumSubRegions(sub);
+  assert.equal(sub.status, 'Critical Gap');
+  assert.equal(sub.pipelineActual, 0);
+  assert.equal(calculateOfferingRollup([sub]).pipelineGap, -sub.pipelineAop);
+  for (const metric of ['pipeline', 'tcv', 'revenue']) sub = setSubTotal(sub, `${metric}Actual`, sub[`${metric}Aop`]);
+  assert.equal(sub.status, 'Surplus');
+});
+test('Owner, status and search filters intersect', () => {
+  const filters = { quarter, region: 'All Regions', offeringId: 'All', owner: first.owner, searchQuery: 'no matching phrase', statusFilter: 'All', unit: 'M' };
+  assert.equal(matchesSubFilters(offerings[0], first, filters), false);
+  filters.searchQuery = ''; filters.statusFilter = first.status === 'Surplus' ? 'Critical Gap' : 'Surplus';
+  assert.equal(matchesSubFilters(offerings[0], first, filters), false);
+  filters.statusFilter = 'All'; assert.equal(matchesSubFilters(offerings[0], first, filters), true);
+});
+test('Quick action preserves selected parent and selected child', () => {
+  const off = offerings[2], sub = off.subOfferings[1];
+  assert.deepEqual(initialActionScope(offerings, { offeringId: off.id, subOfferingId: sub.id }), { offeringId: off.id, subOfferingId: sub.id });
+  assert.deepEqual(initialActionScope(offerings, { offeringId: off.id, subOfferingId: '' }), { offeringId: off.id, subOfferingId: '' });
+});
+test('Action cannot be saved under another practice parent or quarter', () => {
+  assert.throws(() => resolveAction({ ...actions[0], offeringId: offerings[3].id }, offerings));
+  assert.throws(() => resolveAction({ ...actions[0], targetQuarter: 'Q2 FY 27' }, offerings));
+});
+test('Parent-only action and completed progress resolve correctly', () => {
+  const action = resolveAction({ ...actions[0], subOfferingId: '', status: 'Completed', progressPercent: 30 }, offerings);
+  assert.equal(action.subOfferingName, ''); assert.equal(action.progressPercent, 100);
+});
+test('All quarterly workbooks round trip with correct action parents', () => {
+  for (const [q, offs] of Object.entries(ALL_QUARTER_OFFERINGS)) {
+    const acts = ALL_QUARTER_ACTIONS[q];
+    const result = parseExcelImport(serialize(buildWorkbook(offs, acts)), offs, acts, q);
+    assert.equal(result.error, undefined);
+    assert.equal(result.offerings.length, offs.length); assert.equal(result.actions.length, acts.length);
+    result.actions.forEach(a => resolveAction(a, result.offerings));
+  }
+});
+test('A workbook imports into a clean environment using stable IDs', () => {
+  const result = parseExcelImport(serialize(buildWorkbook(offerings, actions)), [], [], quarter);
+  assert.equal(result.error, undefined);
+  assert.equal(result.actions[0].subOfferingId, actions[0].subOfferingId);
+});
+test('Empty registry round trips and clears actions', () => {
+  const result = imported(buildWorkbook(offerings, []));
+  assert.equal(result.error, undefined); assert.equal(result.actions.length, 0);
+});
+test('Malformed workbook is rejected without partial records', () => {
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Wrong'], [123]]), 'Data');
+  const result = imported(wb); assert.ok(result.error); assert.equal(result.offerings.length, 0);
+});
+test('Foreign action parent is rejected transactionally', () => {
+  const wb = buildWorkbook(offerings, [{ ...actions[0], offeringId: offerings[3].id, offeringName: offerings[3].name }]);
+  const result = imported(wb); assert.ok(result.error); assert.equal(result.offerings.length, 0);
+});
+test('Master-only workbook imports changed values and redistributes regions', () => {
+  const wb = buildWorkbook(offerings, actions);
+  delete wb.Sheets['Regional Breakdown']; wb.SheetNames = wb.SheetNames.filter(n => n !== 'Regional Breakdown');
+  const sheet = wb.Sheets['Offerings & Sub-Offerings'];
+  const data = XLSX.utils.sheet_to_json(sheet);
+  data[1]['Revenue Actual ($M)'] = 0;
+  wb.Sheets['Offerings & Sub-Offerings'] = XLSX.utils.json_to_sheet(data);
+  const result = imported(wb); assert.equal(result.error, undefined);
+  const sub = result.offerings[0].subOfferings[0]; assert.equal(sub.revenueActual, 0);
+  assert.equal(Object.values(sub.regionalBreakdown).reduce((n, r) => n + r.revenueActual, 0), 0);
+});
+test('Mismatched master and regional totals are rejected', () => {
+  const wb = buildWorkbook(offerings, actions); const sheet = XLSX.utils.sheet_to_json(wb.Sheets['Regional Breakdown']);
+  sheet[0]['Pipeline Actual ($M)'] = 12345;
+  wb.Sheets['Regional Breakdown'] = XLSX.utils.json_to_sheet(sheet);
+  assert.match(imported(wb).error, /Regional totals/);
+});
+test('Saved edits and actions survive a storage round trip', () => {
+  const { saveDashboard, loadDashboard } = require('../src/utils/storage.ts');
+  const data = structuredClone({ allOfferings: ALL_QUARTER_OFFERINGS, allActions: ALL_QUARTER_ACTIONS });
+  data.allOfferings[quarter][0].subOfferings[0] = setSubTotal(first, 'pipelineActual', 123.45);
+  data.allActions[quarter].push({ ...actions[0], id: 'storage-test', title: 'Persisted action' });
+  let raw;
+  const storage = { getItem: () => raw, setItem: (key, value) => { raw = value; } };
+  saveDashboard(storage, data);
+  const restored = loadDashboard(storage);
+  assert.equal(restored.allOfferings[quarter][0].subOfferings[0].pipelineActual, 123.45);
+  assert.ok(restored.allActions[quarter].some(a => a.id === 'storage-test'));
+  assert.equal(restored.allActions['Q2 FY 27'].some(a => a.id === 'storage-test'), false);
+});
+test('Corrupted storage reports an error', () => {
+  const { loadDashboard } = require('../src/utils/storage.ts');
+  assert.throws(() => loadDashboard({ getItem: () => '{bad data' }));
+  assert.throws(() => loadDashboard({ getItem: () => '{}' }));
+});
+test('Negative and non-finite metrics are rejected', () => {
+  for (const value of [-1, Infinity, NaN]) assert.throws(() => setSubTotal(first, 'pipelineActual', value));
+});
+test('An edited practice name is reflected on its linked action', () => {
+  const changed = structuredClone(offerings);
+  const action = actions[0];
+  const off = changed.find(o => o.id === action.offeringId);
+  off.name = 'Renamed parent';
+  off.subOfferings.find(s => s.id === action.subOfferingId).name = 'Renamed practice';
+  const resolved = resolveAction(action, changed);
+  assert.equal(resolved.offeringName, 'Renamed parent'); assert.equal(resolved.subOfferingName, 'Renamed practice');
+});
+test('Executive brief includes accurate totals, currency and action parents', () => {
+  const { buildExecutiveSummary, priorityActions } = require('../src/utils/executiveBrief.ts');
+  const filters = { quarter, unit: 'M' };
+  const summary = buildExecutiveSummary(offerings, actions, filters, new Date('2026-09-09T00:00:00Z'));
+  assert.match(summary, /Pipeline: \$109\.5M/);
+  assert.match(summary, /Quarter: Q1 FY 27/);
+  priorityActions(actions).forEach(action => {
+    assert.ok(summary.includes(`${action.offeringName} > ${action.subOfferingName || 'Entire offering'}`));
+    assert.ok(summary.includes(action.rootCause)); assert.ok(summary.includes(action.description));
+  });
+  assert.ok(priorityActions(actions).every(a => a.status !== 'Completed'));
+  assert.match(buildExecutiveSummary(offerings, actions, { ...filters, unit: 'INR_Cr' }), /₹914\.33 Cr/);
+});
+test('Export retains stable scope IDs, all action details and valid zero values', () => {
+  const off = structuredClone(offerings[0]); off.subOfferings[0] = setSubTotal(off.subOfferings[0], 'revenueActual', 0);
+  Object.assign(off, calculateOfferingRollup(off.subOfferings));
+  const wb = buildWorkbook([off], actions.filter(a => a.offeringId === off.id));
+  const master = XLSX.utils.sheet_to_json(wb.Sheets['Offerings & Sub-Offerings']);
+  assert.equal(master[1]['Revenue Actual ($M)'], 0); assert.equal(master[1]['Offering ID'], off.id);
+  const registry = XLSX.utils.sheet_to_json(wb.Sheets['Remedial Actions']);
+  registry.forEach(row => { const a = actions.find(a => a.id === row['Action ID']); assert.equal(row['Remedial Action Details'], a.description); assert.equal(row['Sub-Offering ID'], a.subOfferingId); assert.equal(row['Root Cause'], a.rootCause); });
+});
+console.log(`${count} data tests passed.`);
+const serverTests = require('node:child_process').spawnSync(process.execPath, ['--test', require('node:path').join(__dirname, '../tests/server.test.mjs')], { stdio: 'inherit' });
+if (serverTests.status !== 0) process.exitCode = 1;

@@ -1,0 +1,6 @@
+{
+  "name": "Solution Offerings Pipeline & TCV Dashboard",
+  "description": "Executive dashboard to monitor pipeline, TCV, and revenue performance, TCV gaps, and owner remediation actions across solution offerings.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
