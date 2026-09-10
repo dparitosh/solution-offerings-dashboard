@@ -268,5 +268,65 @@ test('Invalid sheet metrics identify the sheet and row and mixed quarters are re
   assert.match(reviewMapping(mappingBuffer([mappingRow()]), [], [], [], quarter).error, /at least one/);
 });
 console.log(`${count} data tests passed.`);
+const { readWorkbookApp, validateWorkbookApp, updateAppRecord, removeAppRecord, workbookAppExport, readAppLibrary, APP_STORAGE_KEY, convertValue } = require('../src/utils/workbookApp.ts');
+const genericWorkbook = () => {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Offerings'], [], ['ID', 'Name', 'Target'], ['001', 'Cloud', 10], ['002', 'Data', 0]]), 'Offerings');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Action ID', 'Offering ID', 'Title', 'Impact', 'Done'], ['A1', '001', 'Build pipeline', 3, false], ['A2', '002', 'Close gap', 0, true]]), 'Actions');
+  return wb;
+};
+const genericApp = () => {
+  const app = readWorkbookApp(serialize(genericWorkbook()), 'Customer.xlsx');
+  app.relationships = [{ id: 'rel1', kind: 'parent-child', fromPage: 'p1', fromColumn: 'c1', toPage: 'p0', toColumn: 'c0' }];
+  return validateWorkbookApp(app);
+};
+test('Excel-to-app detects pages and typed values without losing zero, false or leading-zero IDs', () => {
+  const app = genericApp(); assert.equal(app.pages.length, 2); assert.equal(app.pages[0].headerRow, 3);
+  assert.equal(app.pages[0].rows[0].sourceRow, 4); assert.equal(app.pages[0].rows[0].values.c0, '001');
+  assert.equal(app.pages[0].columns[2].type, 'number'); assert.equal(app.pages[0].rows[1].values.c2, 0);
+  assert.equal(app.pages[1].rows[0].values.c4, false); assert.ok(app.pages.every(p => p.columns.every(c => !c.metric)));
+});
+test('Generated forms normalize valid changes and reject broken relationship edits and deletions', () => {
+  const app = genericApp(), row = app.pages[1].rows[0];
+  const changed = updateAppRecord(app, 'p1', { ...row, values: { ...row.values, c3: '4.5', c4: 'true' } });
+  assert.equal(changed.pages[1].rows[0].values.c3, 4.5); assert.equal(changed.pages[1].rows[0].values.c4, true);
+  assert.equal(app.pages[1].rows[0].values.c3, 3);
+  assert.throws(() => updateAppRecord(app, 'p1', { ...row, values: { ...row.values, c1: 'missing' } }), /no matching/);
+  assert.throws(() => removeAppRecord(app, 'p0', app.pages[0].rows[0].id), /no matching/);
+  assert.equal(removeAppRecord(app, 'p1', row.id).pages[1].rows.length, 1);
+});
+test('App generation rejects duplicate keys, incompatible types and relationship cycles', () => {
+  const app = genericApp(); app.pages[0].rows[1].values.c0 = '001'; assert.throws(() => validateWorkbookApp(app), /unique/);
+  const other = genericApp(); other.pages[0].columns[0].type = 'number'; assert.throws(() => validateWorkbookApp(other), /same type/);
+  const cyclic = genericApp(); cyclic.relationships.push({ id: 'reverse', kind: 'parent-child', fromPage: 'p0', fromColumn: 'c0', toPage: 'p1', toColumn: 'c1' });
+  assert.throws(() => validateWorkbookApp(cyclic), /cycle/);
+});
+test('App type validation accepts real dates and optional blanks and rejects invalid inputs', () => {
+  assert.equal(convertValue('2024-02-29', 'date'), '2024-02-29'); assert.equal(convertValue('', 'number'), null);
+  assert.throws(() => convertValue('2025-02-29', 'date'), /valid/); assert.throws(() => convertValue('unknown', 'boolean'), /true or false/);
+  const app = genericApp(); app.pages[0].columns[1].required = true; app.pages[0].rows[0].values.c1 = ' ';
+  assert.throws(() => validateWorkbookApp(app), /required/);
+});
+test('Generated app JSON preserves relationships and Excel exports all pages with safe unique names', () => {
+  const app = genericApp(); app.pages[0].name = 'A'.repeat(40); app.pages[1].name = 'A'.repeat(40) + 'B';
+  const storage = { getItem: key => key === APP_STORAGE_KEY ? JSON.stringify([app]) : null };
+  assert.deepEqual(readAppLibrary(storage)[0], app);
+  const wb = workbookAppExport(app); assert.equal(wb.SheetNames.length, 2); assert.notEqual(wb.SheetNames[0], wb.SheetNames[1]);
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[1]], { header: 1 }); assert.equal(rows[1][4], false); assert.equal(rows[2][3], 0);
+  assert.throws(() => readAppLibrary({ getItem: () => '{broken' }));
+});
+test('Workbook app header overrides retain source row numbers and mixed columns remain text', () => {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Report'], ['Value'], [1], ['pending']]), 'Mixed');
+  const app = readWorkbookApp(serialize(wb), 'mixed.xlsx', { Mixed: 2 });
+  assert.equal(app.pages[0].columns[0].type, 'text'); assert.equal(app.pages[0].rows[0].values.c0, '1'); assert.equal(app.pages[0].rows[0].sourceRow, 3);
+});
+test('Workbook app refuses formulas without cached results and preserves exported formulas as text', () => {
+  const wb = genericWorkbook(); wb.Sheets.Actions.D2 = { t: 'n', f: '1+2' };
+  assert.throws(() => readWorkbookApp(serialize(wb), 'formula.xlsx'), /formula has no saved result/);
+  const app = genericApp(); app.pages[0].rows[0].values.c1 = '=1+2';
+  const exported = workbookAppExport(app); assert.equal(exported.Sheets.Offerings.B2.t, 's'); assert.equal(exported.Sheets.Offerings.B2.f, undefined);
+});
+console.log(`${count} total application tests passed.`);
 const serverTests = require('node:child_process').spawnSync(process.execPath, ['--test', require('node:path').join(__dirname, '../tests/server.test.mjs')], { stdio: 'inherit' });
 if (serverTests.status !== 0) process.exitCode = 1;

@@ -3,6 +3,7 @@ import { ALL_QUARTER_OFFERINGS, ALL_QUARTER_ACTIONS } from './data/initialData';
 import { Offering, SubOffering, RemedialAction, FilterOptions, QuarterType, ActionScope } from './types/dashboard';
 import { calculateOfferingRollup } from './utils/calculations';
 import { ImportMappingModal } from './components/ImportMappingModal';
+import { WorkbookAppBuilder } from './components/WorkbookAppBuilder';
 import { resolveAction } from './utils/dataIntegrity';
 import { defaultDashboard, loadDashboard, saveDashboard } from './utils/storage';
 import { Header } from './components/Header';
@@ -18,6 +19,7 @@ import { VideoDemoModal } from './components/VideoDemoModal';
 import { CheckCircle2, AlertCircle, Sparkles, Layers } from 'lucide-react';
 
 export default function App() {
+  const [builderOpen, setBuilderOpen] = useState(false);
   const [initial] = useState(() => {
     try { return { data: loadDashboard(window.localStorage), error: '' }; }
     catch { return { data: defaultDashboard, error: 'Saved data could not be loaded. Default data is shown; the saved copy has not been overwritten.' }; }
@@ -199,6 +201,7 @@ export default function App() {
     }
   };
 
+  if (builderOpen) return <WorkbookAppBuilder onClose={() => setBuilderOpen(false)} />;
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans selection:bg-blue-500 selection:text-white">
 
@@ -219,6 +222,7 @@ export default function App() {
         onOpenReportModal={() => setReportModalOpen(true)}
         onOpenVideoDemoModal={() => setVideoDemoModalOpen(true)}
         onImportFile={handleImportFile}
+        onOpenAppBuilder={() => setBuilderOpen(true)}
       />
 
 <p role="status" className="px-4 py-2 text-center text-xs bg-amber-50 text-amber-900">{storageMessage}</p>

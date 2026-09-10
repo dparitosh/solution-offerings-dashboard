@@ -20,6 +20,7 @@ interface HeaderProps {
   onOpenReportModal: () => void;
   onOpenVideoDemoModal?: () => void;
   onImportFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onOpenAppBuilder: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -29,7 +30,8 @@ export const Header: React.FC<HeaderProps> = ({
   actions,
   onOpenReportModal,
   onOpenVideoDemoModal,
-  onImportFile
+  onImportFile,
+  onOpenAppBuilder
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const kpis = calculateExecutiveKPIs(offerings, filters.region);
@@ -100,6 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Global Actions */}
             <div className="flex items-center gap-2">
+              <button onClick={onOpenAppBuilder} className="px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg whitespace-nowrap">Excel to App</button>
               {onOpenVideoDemoModal && (
                 <button
                   onClick={onOpenVideoDemoModal}
