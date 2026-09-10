@@ -214,6 +214,58 @@ test('Relationship and source provenance survive Excel round trip', () => {
   const result = reviewMapping(mappingBuffer([mappingRow()]), mappingOptions, [], [], quarter);
   const restored = parseExcelImport(serialize(buildWorkbook(result.offerings, [])), [], [], quarter);
   assert.equal(restored.error, undefined); assert.deepEqual(restored.offerings[0].subOfferings[0].mapping, result.offerings[0].subOfferings[0].mapping);
+  const original = structuredClone(result.offerings); original[0].subOfferings[0].mapping = undefined;
+  const cleared = parseExcelImport(serialize(buildWorkbook(original, [])), result.offerings, [], quarter);
+  assert.equal(cleared.error, undefined); assert.equal(cleared.offerings[0].subOfferings[0].mapping, undefined);
+});
+test('Multiple sheets combine into one group with unique IDs and original source rows', () => {
+  const wb = XLSX.utils.book_new();
+  for (const [name, detail] of [['East', 'One'], ['West', 'Two']]) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([mappingRow('Original', detail)]), name);
+  const result = reviewMapping(serialize(wb), ['East', 'West'].map(sheet => ({ ...mappingOptions, sheet })), [], [], quarter);
+  assert.equal(result.error, undefined); assert.equal(result.offerings.length, 1); assert.equal(result.offerings[0].pipelineAop, 10);
+  const subs = result.offerings[0].subOfferings;
+  assert.equal(new Set(subs.map(s => s.id)).size, 2); assert.deepEqual(subs.map(s => s.mapping.sourceSheet), ['East', 'West']);
+  const restored = parseExcelImport(serialize(buildWorkbook(result.offerings, [])), [], [], quarter);
+  assert.equal(restored.error, undefined); assert.deepEqual(restored.offerings[0].subOfferings.map(s => s.mapping), subs.map(s => s.mapping));
+});
+test('Cross-sheet duplicates and parent cycles fail the whole import', () => {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([mappingRow('A', 'One', 'B')]), 'East');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([mappingRow('A', 'One', 'B')]), 'West');
+  const opts = ['East', 'West'].map(sheet => ({ ...mappingOptions, sheet }));
+  assert.match(reviewMapping(serialize(wb), opts, [], [], quarter).error, /West:.*duplicate/);
+  wb.Sheets.West = XLSX.utils.json_to_sheet([mappingRow('B', 'Two', 'A')]);
+  assert.match(reviewMapping(serialize(wb), opts.map(o => ({ ...o, relationship: 'parent-child' })), [], [], quarter).error, /cycle/);
+});
+test('Multi-sheet validation retains actions that span different sheets', () => {
+  const off = offerings[0]; const wb = XLSX.utils.book_new();
+  off.subOfferings.forEach((sub, i) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([mappingRow(off.name, sub.name, 'Combined')]), `Part${i}`));
+  const result = reviewMapping(serialize(wb), wb.SheetNames.map(sheet => ({ ...mappingOptions, sheet, relationship: 'parent-child' })), offerings, actions.filter(a => a.offeringId === off.id), quarter);
+  assert.equal(result.error, undefined); assert.ok(result.actions.length); result.actions.forEach(a => assert.equal(a.offeringId, result.offerings[0].id));
+});
+test('Header detection handles title rows and suggestions leave ambiguous headers unmapped', () => {
+  const { suggestColumns } = require('../src/utils/importMapping.ts');
+  const row = mappingRow(), wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Customer report'], [], Object.keys(row), Object.values(row)]), 'Source');
+  const info = inspectWorkbook(serialize(wb))[0]; assert.equal(info.headerRow, 3);
+  assert.equal(suggestColumns(['Offering Name', 'New Offering'])['Offering'], 'Offering Name');
+  assert.equal(suggestColumns(['Offering', 'Offering Name'])['Offering'], 'Offering');
+  assert.equal(suggestColumns(['Offering Name', 'Solution Offering'])['Offering'], '');
+  assert.equal(suggestColumns(['Offering', 'Offering'])['Offering'], '');
+  assert.equal(suggestColumns(['Pipeline Planned'])['Pipeline AOP ($M)'], 'Pipeline Planned');
+  const result = reviewMapping(serialize(wb), { ...mappingOptions, headerRow: 3, startRow: 4, endRow: 4 }, [], [], quarter);
+  assert.equal(result.error, undefined); assert.equal(result.offerings[0].subOfferings[0].mapping.sourceRow, 4);
+  const offset = XLSX.utils.aoa_to_sheet([]);
+  XLSX.utils.sheet_add_aoa(offset, [Object.keys(row), Object.values(row)], { origin: 'A3' });
+  wb.Sheets.Source = offset;
+  assert.equal(inspectWorkbook(serialize(wb))[0].headerRow, 3);
+  const offsetResult = reviewMapping(serialize(wb), { ...mappingOptions, headerRow: 3, startRow: 4, endRow: 4 }, [], [], quarter);
+  assert.equal(offsetResult.error, undefined); assert.equal(offsetResult.offerings[0].subOfferings[0].mapping.sourceRow, 4);
+});
+test('Invalid sheet metrics identify the sheet and row and mixed quarters are rejected', () => {
+  assert.match(reviewMapping(mappingBuffer([{ ...mappingRow(), 'Revenue Actual ($M)': 'invalid' }]), mappingOptions, [], [], quarter).error, /Source: Row 2: Revenue/);
+  assert.match(reviewMapping(mappingBuffer([{ ...mappingRow(), Quarter: 'Q2 FY 27' }]), mappingOptions, [], [], quarter).error, /quarter differs/);
+  assert.match(reviewMapping(mappingBuffer([mappingRow()]), [], [], [], quarter).error, /at least one/);
 });
 console.log(`${count} data tests passed.`);
 const serverTests = require('node:child_process').spawnSync(process.execPath, ['--test', require('node:path').join(__dirname, '../tests/server.test.mjs')], { stdio: 'inherit' });

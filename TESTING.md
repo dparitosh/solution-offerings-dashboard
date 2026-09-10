@@ -22,6 +22,11 @@ Registry actions and free-text remedial summaries are separate records; both app
 Automated regression tests cover data calculations, filters, parent links, all-quarter workbook round trips, invalid imports, executive summary content, browser storage and Node HTTP serving (including video seeking). Browser checks cover creation, reassignment, persistence, quarter isolation and zero/regional edits. The dashboard contains demo data and generated example opportunity details; it has no shared backend database or CRM feed.
 # Mapping workflow acceptance
 
+- Choose two detail sheets with different header-row positions. Verify headers and sample values are suggested independently, and each worksheet retains its mappings when switching tabs.
+- Use Copy mapping to selected sheets. Identical headers should copy; unmatched headers stay empty, and row ranges remain unchanged.
+- Review both sheets together. Verify the combined totals, source sheet/row provenance and existing action parents; a duplicate detail across sheets must block the whole import.
+- Change a sheet selection after a valid review. Apply must be disabled until the changed selection is reviewed again.
+
 - Import a flat source workbook. Check column suggestions, change the header row, and use Read headers to refresh the choices.
 - Map all six metrics, including zero actuals. Review tags and peers: totals must count each selected detail once.
 - Select parent–child: Updated Offering becomes the parent, with the original offering/sub-offering path shown in its details.

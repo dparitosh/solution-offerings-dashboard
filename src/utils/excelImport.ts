@@ -75,6 +75,7 @@ export function parseExcelImport(fileData: ArrayBuffer, current: Offering[] = []
         avgDealSize: number(row['Average Deal Size'], 'Average Deal Size', previous?.avgDealSize ?? 0), historicalGrowthYoY: previous?.historicalGrowthYoY ?? 0, regionalBreakdown };
       if (sub.winRate > 100 || !Number.isInteger(sub.dealCount)) throw new Error(`Invalid win rate or deal count for ${subName}.`);
       for (const [i, field] of metricFields.entries()) sub = setSubTotal(sub, field, number(row[metricHeaders[i]], `${subName}: ${metricHeaders[i]}`));
+      sub.mapping = undefined;
       if (text(row['Mapping Relationship'])) {
         const relationship = text(row['Mapping Relationship']) as NonNullable<SubOffering['mapping']>['relationship'];
         if (!['tag', 'parent-child', 'peer'].includes(relationship) || !text(row['Updated Offering']) || !text(row['Source Offering'])) throw new Error(`Invalid relationship metadata for ${subName}.`);
